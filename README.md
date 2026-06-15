@@ -10,12 +10,12 @@ Install deps:
 pip install -r requirements.txt
 ```
 
-Test tools only:
+Test tools only before integrating the tools:
 ```bash
 python test_tools.py
 ```
 
-Tools (quick reference)
+Tools and their purpose:
 -----------------------
 
 - `search_listings(description: str, size: str|None = None, max_price: float|None = None) -> list[dict]`
@@ -27,9 +27,9 @@ Tools (quick reference)
 - `create_fit_card(outfit: str, new_item: dict) -> str`
 	- Purpose: produce a 3-line fit card with title/price, the outfit sentence, and a short "why it works" line.
 
-- `run_agent(query: str, wardrobe: dict) -> dict` (planning loop) and `handle_query(user_query: str, wardrobe_choice: str) -> (listing_text, outfit, fit_card)` (UI glue).
+- `run_agent(query: str, wardrobe: dict) -> dict` (planning loop) and `handle_query(user_query: str, wardrobe_choice: str) -> (listing_text, outfit, fit_card)`.
 
-How the planning loop works (step-by-step)
+How the planning loop works 
 ----------------------------------------
 
 1. Parse `query` into `description`, `size`, and `max_price` (regex for `$N` and `size`).
@@ -41,35 +41,30 @@ How the planning loop works (step-by-step)
 5. Call `create_fit_card(outfit, selected_item)`.
 6. Return a `session` dict that contains `selected_item`, `outfit_suggestion`, `fit_card`, and `error`.
 
-State management (what's stored and when)
+State management 
 ----------------------------------------
 
 - `session` dict holds everything for one interaction: `query`, `parsed`, `search_results`, `selected_item`, `wardrobe`, `outfit_suggestion`, `fit_card`, `error`.
 - Each tool writes its output into `session` (or returns values used to populate `session`) so the next step reads from it.
 
-Error handling (short examples)
+Error handling 
 ------------------------------
 
 - `search_listings`: returns empty list if nothing matches. Example: a too-strict query like "designer ballgown size XXS under $5" results in no matches; the agent returns: "No listings found. Try removing the size filter, increasing max price, or using fewer keywords.".
 - `suggest_outfit`: never raises for normal inputs; if wardrobe is empty it returns helpful guidance instead of failing.
 - `create_fit_card`: returns a fallback string "Couldn't create fit card — missing item or outfit info." if outfit input is empty.
 
-Spec notes
-----------
 
-- Spec helped: defining inputs/outputs in `planning.md` made implementing the pipeline straightforward.
-- Implementation change: Instead of calling an LLM for text generation, the first version uses simple deterministic Python logic (scoring tags/colors and templates) so the project runs offline and is easy to test. You can replace parts with LLMs later.
-
-AI usage (two examples)
+AI usage 
 -----------------------
 
 1. I asked the assistant for a scoring recipe for `search_listings` (title > tags > body, tie-break by price). I implemented and tuned the weights after testing.
 2. I asked for `suggest_outfit` phrasing and fallback behavior; the assistant suggested examples and an algorithm. I implemented a deterministic version and adjusted wording.
 
-Next steps (suggestions)
+Next steps 
 ------------------------
 
-- Run the UI: `python app.py` and try example queries.
-- If you want richer language, swap `create_fit_card` or `suggest_outfit` to call an LLM and keep the matching logic deterministic.
+- Run the UI: `python app.py` and try with different example queries.
 
-If you want this README even shorter or want a one-page cheat-sheet for contributors, I can make that now.
+
+

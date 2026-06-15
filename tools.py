@@ -13,6 +13,7 @@ Tools:
 """
 
 import os
+import re
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -27,6 +28,7 @@ load_dotenv()
 def _get_groq_client():
     """Initialize and return a Groq client using GROQ_API_KEY from .env."""
     api_key = os.environ.get("GROQ_API_KEY")
+    
     if not api_key:
         raise ValueError(
             "GROQ_API_KEY not set. Add it to a .env file in the project root."
@@ -69,8 +71,63 @@ def search_listings(
 
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    listings = load_listings()
+
+    # normalize inputs
+    desc = (description or "").lower().strip()
+    tokens = [t for t in re.split(r"\W+", desc) if t]
+    size_norm = (size or "").lower().strip() or None
+
+    scored: list[tuple[int, float, dict]] = []
+
+    for l in listings:
+        title = (l.get("title") or "").lower()
+        body = (l.get("description") or "").lower()
+        tags = " ".join([t.lower() for t in l.get("style_tags", [])])
+
+        # price handling
+        raw_price = l.get("price")
+        try:
+            price_val = float(raw_price) if raw_price is not None else float("inf")
+        except Exception:
+            price_val = float("inf")
+
+        # size filter 
+        listing_size = (l.get("size") or "").lower()
+        if size_norm and size_norm not in listing_size:
+            continue
+
+        # price filter
+        if max_price is not None:
+            try:
+                if price_val > float(max_price):
+                    continue
+            except Exception:
+                pass
+
+        # relevance scoring by token overlap
+        if tokens:
+            relevance = 0
+            for t in tokens:
+                if t in title:
+                    relevance += 3
+                if t in tags:
+                    relevance += 2
+                if t in body:
+                    relevance += 1
+        else:
+            relevance = 1
+
+        # drop listings with zero relevance
+        if relevance <= 0:
+            continue
+
+        scored.append((relevance, price_val, l))
+
+    # sort by relevance (desc) then price (asc)
+    scored.sort(key=lambda x: (-x[0], x[1]))
+
+    return [item for (_score, _price, item) in scored]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -100,8 +157,90 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
     Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    items = wardrobe.get("items", []) if wardrobe else []
+
+    # If the user has no wardrobe items, return friendly guidance
+    if not items:
+        return (
+            "Your wardrobe is empty — add basics like jeans, a neutral jacket, and "
+            "sneakers so I can suggest specific outfits. For now, try pairing this "
+            f"item ({new_item.get('title')}) with high-waist jeans and white sneakers."
+        )
+
+    new_tags = {t.lower() for t in new_item.get("style_tags", [])}
+    new_colors = {c.lower() for c in new_item.get("colors", [])}
+    new_cat = (new_item.get("category") or "").lower()
+
+    def score_piece(p: dict) -> int:
+        score = 0
+        p_tags = {t.lower() for t in p.get("style_tags", [])}
+        p_colors = {c.lower() for c in p.get("colors", [])}
+
+        # style tag overlap is the strongest signal
+        score += 3 * len(new_tags & p_tags)
+        # color matches are useful secondary signals
+        score += 2 * len(new_colors & p_colors)
+
+        # prefer complementary categories (e.g., bottoms for a top)
+        p_cat = (p.get("category") or "").lower()
+        if new_cat == "tops" and p_cat == "bottoms":
+            score += 2
+        if new_cat == "bottoms" and p_cat == "tops":
+            score += 2
+        if p_cat == "outerwear":
+            score += 1
+
+        return score
+
+    scored = []
+    for p in items:
+        s = score_piece(p)
+        if s > 0:
+            scored.append((s, p))
+
+    # If no wardrobe pieces scored (no overlaps), return a gentle fallback
+    if not scored:
+        return (
+            f"I couldn't find close matches in your wardrobe for {new_item.get('title')}. "
+            "Try pairing it with neutral basics like jeans, a denim jacket, or simple sneakers."
+        )
+
+    # sort by score descending
+    scored.sort(key=lambda x: -x[0])
+
+    # Select up to two complementary pieces, preferring different categories
+    selected = []
+    seen_cats = set()
+    for _s, p in scored:
+        cat = (p.get("category") or "").lower()
+        if cat in seen_cats:
+            continue
+        selected.append(p)
+        seen_cats.add(cat)
+        if len(selected) >= 2:
+            break
+
+    # build human-friendly suggestion text
+    pieces_text = ", ".join(f"{p['name']} ({p.get('category')})" for p in selected)
+
+    # explain why these pieces work together
+    reasons = []
+    # shared style tags
+    shared_tags = set()
+    for p in selected:
+        shared_tags |= new_tags & {t.lower() for t in p.get("style_tags", [])}
+    if shared_tags:
+        reasons.append("style: " + ", ".join(sorted(shared_tags)))
+    # shared colors
+    shared_colors = set()
+    for p in selected:
+        shared_colors |= new_colors & {c.lower() for c in p.get("colors", [])}
+    if shared_colors:
+        reasons.append("colors: " + ", ".join(sorted(shared_colors)))
+
+    reason_text = ("; ".join(reasons)) if reasons else "they complement each other"
+
+    return f"Pair the {new_item.get('title')} with {pieces_text}. Reason: {reason_text}."
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -133,5 +272,40 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Before writing code, fill in the Tool 3 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    # Guard against empty outfit input
+    if not outfit or not str(outfit).strip():
+        return "Couldn't create fit card — missing item or outfit info."
+
+    title = new_item.get("title", "Item")
+    price = new_item.get("price")
+    try:
+        price_str = f"${float(price):.2f}" if price is not None else "Price unknown"
+    except Exception:
+        price_str = str(price)
+    platform = new_item.get("platform") or "unknown"
+
+    # Short metadata
+    category = (new_item.get("category") or "").capitalize()
+    tags = new_item.get("style_tags") or []
+    colors = new_item.get("colors") or []
+
+    # Build a concise, human-friendly fit card (3 lines)
+    lines = []
+    lines.append(f"{title} — {price_str} on {platform}")
+    # Outfit suggestion (use as-is; it's already a friendly sentence)
+    lines.append(outfit)
+
+    # Why it works: combine category, a couple of tags, and colors
+    reasons = []
+    if category:
+        reasons.append(category)
+    if tags:
+        reasons.append("vibe: " + ", ".join(tags[:3]))
+    if colors:
+        reasons.append("colors: " + ", ".join(colors[:3]))
+
+    reason_text = "; ".join(reasons) if reasons else "they complement each other"
+    lines.append(f"Why it works: {reason_text}.")
+
+    return "\n".join(lines)
+

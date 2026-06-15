@@ -92,9 +92,75 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
+    # Lightweight parser for description, size, and max_price
+    def _parse_query(q: str) -> dict:
+        import re
+
+        size = None
+        max_price = None
+        desc = q or ""
+
+        # find price like $30
+        m = re.search(r"\$([0-9]+(?:\.[0-9]+)?)", q)
+        if m:
+            try:
+                max_price = float(m.group(1))
+            except Exception:
+                max_price = None
+
+        # find size after 'size' keyword or simple tokens like W30
+        m2 = re.search(r"size\s*[:]?\s*([A-Za-z0-9/\-]+)", q, re.I)
+        if m2:
+            size = m2.group(1).strip()
+        else:
+            m3 = re.search(r"\b(w\d+|\d{1,3}x?\d{0,3})\b", q, re.I)
+            if m3:
+                size = m3.group(1)
+
+        # remove matched price and size from description for cleaner keywords
+        desc = re.sub(r"\$[0-9]+(?:\.[0-9]+)?", "", desc)
+        desc = re.sub(r"size\s*[:]?\s*[A-Za-z0-9/\-]+", "", desc, flags=re.I)
+        desc = desc.strip()
+
+        return {"description": desc, "size": size, "max_price": max_price}
+
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    # Step 2: parse the query
+    session["parsed"] = _parse_query(query)
+
+    # Step 3: search listings
+    parsed = session["parsed"]
+    try:
+        results = search_listings(parsed.get("description", ""), parsed.get("size"), parsed.get("max_price"))
+    except Exception as e:
+        session["error"] = f"Search failed: {e}"
+        return session
+
+    session["search_results"] = results
+    if not results:
+        session["error"] = (
+            "No listings found. Try removing the size filter, increasing max price, or using fewer keywords."
+        )
+        return session
+
+    # Step 4: select top item
+    session["selected_item"] = results[0]
+
+    # Step 5: suggest outfit
+    try:
+        session["outfit_suggestion"] = suggest_outfit(session["selected_item"], wardrobe)
+    except Exception as e:
+        session["error"] = f"Outfit suggestion failed: {e}"
+        return session
+
+    # Step 6: create fit card
+    try:
+        session["fit_card"] = create_fit_card(session["outfit_suggestion"], session["selected_item"])
+    except Exception as e:
+        session["error"] = f"Fit card creation failed: {e}"
+        return session
+
     return session
 
 

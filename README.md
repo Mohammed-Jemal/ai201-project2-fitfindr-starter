@@ -1,4 +1,4 @@
-# FitFindr — Short README (Beginner Friendly)
+# FitFindr 
 
 This project finds secondhand listings and suggests outfits using a local mock dataset. Run, test, and extend the tools step-by-step.
 
